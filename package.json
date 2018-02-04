@@ -1,0 +1,57 @@
+{
+  "name": "mgtsai.test-angular-compiler",
+  "version": "1.0.0",
+  "description": "Angular compiler modification and testing",
+  "license": "MIT",
+  "repository": {
+    "private": true
+  },
+  "scripts": {
+    "start": "tsc && concurrently \"tsc -w\" \"lite-server\" ",
+    "lite": "lite-server",
+    "tsc": "tsc",
+    "tsc:w": "tsc -w"
+  },
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "https://github.com/angular/angular.io/blob/master/LICENSE"
+    }
+  ],
+  "dependencies": {
+    "@angular/animations": "4.2.2",
+    "@angular/common": "4.2.2",
+    "@angular/compiler": "4.2.2",
+    "@angular/compiler-cli": "4.2.2",
+    "@angular/core": "4.2.2",
+    "@angular/forms": "4.2.2",
+    "@angular/http": "4.2.2",
+    "@angular/platform-browser": "4.2.2",
+    "@angular/platform-browser-dynamic": "4.2.2",
+    "@angular/platform-server": "4.2.2",
+    "@angular/router": "4.2.2",
+    "@angular/upgrade": "4.2.2",
+    "angular-in-memory-web-api": "0.3.2",
+    "bootstrap": "3.3.7",
+    "core-js": "2.4.1",
+    "ngx-bootstrap": "1.6.6",
+    "reflect-metadata": "0.1.10",
+    "rxjs": "5.4.0",
+    "systemjs": "0.20.12",
+    "zone.js": "0.8.10"
+  },
+  "devDependencies": {
+    "@types/core-js": "0.9.41",
+    "@types/node": "7.0.18",
+    "concurrently": "3.4.0",
+    "lite-server": "2.3.0",
+    "plugin-typescript": "7.0.6",
+    "rollup": "0.41.6",
+    "rollup-plugin-commonjs": "8.0.2",
+    "rollup-plugin-includepaths": "0.2.2",
+    "rollup-plugin-node-resolve": "3.0.0",
+    "rollup-plugin-sourcemaps": "0.4.2",
+    "rollup-plugin-uglify": "1.0.2",
+    "typescript": "2.3.2"
+  }
+}

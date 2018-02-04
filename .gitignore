@@ -1,0 +1,8 @@
+/build/
+/.gradle/
+/node_modules/
+/.npm/
+/.config/
+*.swp
+*.iml
+/.idea/

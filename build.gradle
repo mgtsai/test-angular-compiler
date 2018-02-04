@@ -1,0 +1,243 @@
+//---------------------------------------------------------------------------------------------------------------------
+buildscript {
+    repositories {
+        maven { url "https://plugins.gradle.org/m2/" }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+repositories {
+    mavenCentral()
+}
+//---------------------------------------------------------------------------------------------------------------------
+import groovy.json.JsonSlurper
+//---------------------------------------------------------------------------------------------------------------------
+class DockerHelper {
+    private static final def CGROUP_PATTERN = /(?m)^\d+:[\w,?]+:(?:\/[\w.]+)?(?:\/docker[-\/])(\/?(?:docker\/)?(\p{XDigit}{12,}))+(?:\.scope)?$/
+    private static final def mSelfContainerIDLock = new Object()
+    private static String mSelfContainerID = null
+
+    static getSelfContainerID() {
+        synchronized (mSelfContainerIDLock) {
+            if (mSelfContainerID == null) {
+                try {
+                    mSelfContainerID = (new File('/proc/self/cgroup').getText('UTF-8') =~ CGROUP_PATTERN)[0][2]
+                } catch (ignored) {
+                    mSelfContainerID = ''
+                }
+            }
+        }
+        mSelfContainerID != '' ? mSelfContainerID : null
+    }
+
+    static getHostPath(final File localFile) {
+        final String mounts = ['docker', 'inspect', '--format', '{{json .Mounts}}', selfContainerID].execute().text.trim()
+        String mountPoint = null
+        String destination = "/"
+        new JsonSlurper().parseText(mounts).each {
+            if (
+                //(it.Driver == null || it.Driver == 'local') &&
+                it.Destination.startsWith(destination) &&
+                localFile.absolutePath.startsWith("$it.Destination/")
+            ) {
+                mountPoint = it.Source
+                destination = "$it.Destination/"
+            }
+        }
+        mountPoint ? "$mountPoint/${localFile.absolutePath.substring(destination.length())}" : localFile.absolutePath
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+task installAngularNpmModules(type: Exec) {
+    group 'angular'
+    outputs.upToDateWhen { file("$projectDir/angular/node_modules/").isDirectory() }
+    workingDir "$projectDir/angular"
+    commandLine 'npm', 'install'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileAngular(type: Exec) {
+    group 'angular'
+    dependsOn installAngularNpmModules
+    inputs.dir "$projectDir/angular/packages/"
+    inputs.dir "$projectDir/angular/tools/"
+    outputs.dir "$projectDir/angular/dist/packages/"
+    outputs.dir "$projectDir/angular/dist/tools/"
+    workingDir "$projectDir/angular"
+    commandLine './build.sh'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task installNpmModules(type: Exec) {
+    group 'node'
+    inputs.dir "$projectDir/angular/dist/packages-dist/"
+    inputs.dir "$projectDir/angular/dist/tools/"
+    outputs.dir "$projectDir/node_modules/@angular/compiler/"
+    outputs.dir "$projectDir/node_modules/@angular/compiler-cli/"
+    outputs.dir "$projectDir/node_modules/@angular/tsc-wrapped/"
+
+    commandLine 'npm', 'install'
+
+    doLast {
+        copy {
+            from "$projectDir/angular/dist/packages-dist/"
+            into "$projectDir/node_modules/@angular/"
+            include 'compiler/**', 'compiler-cli/**'
+        }
+
+        copy {
+            from "$projectDir/angular/dist/tools/@angular/"
+            into "$projectDir/node_modules/@angular/"
+            include 'tsc-wrapped/**'
+        }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileTool(type: Exec) {
+    group 'tool'
+    dependsOn installNpmModules
+    inputs.dir "$projectDir/tool/"
+    outputs.dir "$buildDir/tool/"
+    workingDir "$projectDir/tool"
+    commandLine "$projectDir/node_modules/.bin/tsc"
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runTool(type: Exec) {
+    group 'tool'
+    dependsOn compileTool
+    workingDir "$projectDir/src"
+    commandLine 'node', '../build/tool/main.js'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileNgcAsES2015(type: Exec) {
+    group 'ngcAsES2015'
+    dependsOn installNpmModules
+    inputs.file "$projectDir/src/tsconfig.ngcAsES2015.json"
+    inputs.dir "$projectDir/src/app/"
+    inputs.dir "$projectDir/src/template/"
+    outputs.dir "$buildDir/ngcAsES2015.ngc/"
+    workingDir "$projectDir/src"
+    commandLine 'node', "$projectDir/node_modules/.bin/ngc", '-p', 'tsconfig.ngcAsES2015.json'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task rollupNgcAsES2015(type: Exec) {
+    group 'ngcAsES2015'
+    inputs.files compileNgcAsES2015.outputs
+    inputs.file "$projectDir/src/rollup-config.ngcAsES2015.js"
+    outputs.dir "$buildDir/ngcAsES2015.rollup/"
+    def entryJs = "$projectDir/build/ngcAsES2015.ngc/src/main/main.platformBrowser.js"
+    def outputJs = "$projectDir/build/ngcAsES2015.rollup/build.js"
+    workingDir "$projectDir/src"
+    commandLine "$projectDir/node_modules/.bin/rollup", '-c', 'rollup-config.ngcAsES2015.js', '-i', entryJs, '-o', outputJs
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithNgcAsES2015 {
+    group 'ngcAsES2015'
+    inputs.files rollupNgcAsES2015.outputs
+
+    doLast {
+        copy {
+            from "$projectDir/src/"
+            into "$buildDir/ngcAsES2015.docker/"
+            include 'html/**'
+            include 'Dockerfile.ngcAsES2015'
+            rename 'Dockerfile.ngcAsES2015', 'Dockerfile'
+            rename 'index.ngcAsES2015.html', 'index.html'
+        }
+
+        copy {
+            from "$projectDir/node_modules/core-js/client/shim.min.js"
+            from "$projectDir/node_modules/zone.js/dist/zone.min.js"
+            from "$projectDir/node_modules/moment/min/moment.min.js"
+            into "$buildDir/ngcAsES2015.docker/html/"
+        }
+
+        copy {
+            from "$projectDir/node_modules/bootstrap/dist/"
+            into "$buildDir/ngcAsES2015.docker/html/bootstrap/"
+        }
+
+        copy {
+            from "$buildDir/ngcAsES2015.rollup/"
+            into "$buildDir/ngcAsES2015.docker/html/build/ngcAsES2015.rollup/"
+        }
+
+        def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-es2015'
+        def dockerContainerName = 'test-angular-compiler.ngc-as-es2015'
+
+        exec { commandLine 'docker', 'build', '--tag', dockerImageName, "$buildDir/ngcAsES2015.docker" }
+        ['docker', 'stop', dockerContainerName].execute().waitFor()
+        ['docker', 'rm', dockerContainerName].execute().waitFor()
+        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', '20080:80', dockerImageName }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileTscAsCommonJS(type: Exec) {
+    group 'tscAsCommonJS'
+    dependsOn installNpmModules
+    inputs.file "$projectDir/src/tsconfig.tscAsCommonJS.json"
+    inputs.dir "$projectDir/src/app/"
+    inputs.dir "$projectDir/src/template/"
+    outputs.dir "$buildDir/tscAsCommonJS/"
+    workingDir "$projectDir/src"
+    commandLine "$projectDir/node_modules/.bin/tsc", '-p', 'tsconfig.tscAsCommonJS.json'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithTscAsCommonJS {
+    group 'tscAsCommonJS'
+    inputs.files compileTscAsCommonJS.outputs
+
+    doLast {
+        def dockerImageName = 'buildtools/test-angular-compiler.tsc-as-commonjs'
+        def dockerContainerName = 'test-angular-compiler.tsc-as-commonjs'
+
+        exec {
+            workingDir "$projectDir/src"
+            commandLine 'docker', 'build', '--file', 'Dockerfile.tscAsCommonJS', '--tag', dockerImageName, '.'
+        }
+
+        ['docker', 'stop', dockerContainerName].execute().waitFor()
+        ['docker', 'rm', dockerContainerName].execute().waitFor()
+
+        def projectHostDir = DockerHelper.getHostPath projectDir
+        def buildHostDir = DockerHelper.getHostPath buildDir
+        def nginxContainerDir = '/usr/share/nginx'
+        def htmlContainerDir = "$nginxContainerDir/html"
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', '21080:80',
+            '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
+            '--volume', "$buildHostDir/tscAsCommonJS:$htmlContainerDir/build/tscAsCommonJS",
+            '--volume', "$projectHostDir/src:$htmlContainerDir/src",
+            dockerImageName
+        }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithTranspile {
+    group 'transpile'
+
+    doLast {
+        def dockerImageName = 'buildtools/test-angular-compiler.transpile'
+        def dockerContainerName = 'test-angular-compiler.transpile'
+
+        exec {
+            workingDir "$projectDir/src"
+            commandLine 'docker', 'build', '--file', 'Dockerfile.transpile', '--tag', dockerImageName, '.'
+        }
+
+        ['docker', 'stop', dockerContainerName].execute().waitFor()
+        ['docker', 'rm', dockerContainerName].execute().waitFor()
+
+        def projectHostDir = DockerHelper.getHostPath projectDir
+        def nginxContainerDir = '/usr/share/nginx'
+        def htmlContainerDir = "$nginxContainerDir/html"
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', '22080:80',
+            '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
+            '--volume', "$projectHostDir/src:$htmlContainerDir/src",
+            dockerImageName
+        }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------

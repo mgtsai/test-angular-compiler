@@ -1,0 +1,4 @@
+FROM nginx:1.13.0
+COPY nginx/default.transpile.conf /etc/nginx/conf.d/default.conf
+COPY html/ /usr/share/nginx/html/
+COPY html/index.transpile.html /usr/share/nginx/html/index.html

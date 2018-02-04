@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "es5",
+    "module": "es2015",
+    "moduleResolution": "node",
+    "sourceMap": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "removeComments": true,
+    "noImplicitAny": false,
+    "lib": ["dom", "es7"],
+    "outDir": "../build/ngcAsES2015.ngc",
+    "rootDirs": ["../build/aot", "main", "app", "template"]
+  },
+  "include": [
+    "main/**/*.ts", "app/**/*.ts"
+  ],
+  "angularCompilerOptions": {
+    "genDir": "../build/aot",
+    "skipMetadataEmit": true
+  }
+}
