@@ -1,7 +1,7 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
 <html>
 <head>
-<title>Web Terminal</title>
+<title>TestAngularCompiler - Tsc as CommonJS</title>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <base href="/">
 <script type="text/javascript" src="node_modules/core-js/client/shim.min.js"></script>
@@ -11,13 +11,9 @@
 <script type="text/javascript" src="node_modules/moment/min/moment.min.js"></script>
 <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap.min.css"/>
 <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap-theme.min.css"/>
-<!--
-<link rel="stylesheet" href="template/jtMenu.css"/>
-<link rel="stylesheet" href="styles.css">
--->
 
 <script type="text/javascript">
-System.myConfig = {
+System.config({
     paths: {
         'npm:': 'node_modules/'
     },
@@ -40,56 +36,24 @@ System.myConfig = {
         rxjs: {
             defaultExtension: 'js'
         },
-        'build/tscAsCommonJS': {
-            defaultExtension: 'js'
+        'build/tscAsCommonJS.tsc': {
+            defaultExtension: 'js',
+            map: {
+                './main/main.platformBrowserDynamic': './app/main.platformBrowserDynamic'
+            },
+            meta: {
+                '*.js': {
+                    loader: 'systemjs-angular-loader.js',
+                    rootPaths: ['build/tscAsCommonJS.tsc/main', 'build/tscAsCommonJS.tsc/app']
+                }
+            }
         }
     }
-};
+});
 
-System.config(System.myConfig);
-
-System.import('packageMap.js')
-.then(function(result) {
-    System.myConfig.packages['build/tscAsCommonJS'].map = result.packageMap;
-    System.config(System.myConfig);
-    return System.import('build/tscAsCommonJS/main/main.platformBrowserDynamic');
-})
+System.import('build/tscAsCommonJS.tsc/main/main.platformBrowserDynamic')
 .catch(function(err){ console.error(err); });
 </script>
-
-<style>
-html {
-  height: 100%;
-}
-
-body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  margin: 0px;
-}
-
-tr.listTitle > th {
-  text-align: center;
-}
-
-tr.searchTR > td {
-  text-align: center;
-}
-
-tr.contentTR > td {
-  text-align: center;
-  vertical-align: middle !important;
-}
-
-tr.infoTR > td {
-  vertical-align: middle !important;
-}
-
-table.borderless td, table.borderless th {
-  border: none !important;
-}
-</style>
 </head>
 
 <body>

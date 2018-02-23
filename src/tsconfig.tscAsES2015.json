@@ -9,9 +9,12 @@
     "removeComments": true,
     "noImplicitAny": false,
     "lib": ["dom", "es7"],
-    "rootDirs": ["main", "app", "template"]
+    "rootDirs": ["main", "app", "../../src/template"]
   },
   "include": [
     "main/**/*.ts", "app/**/*.ts"
+  ],
+  "exclude": [
+    "main/main.platformBrowser.ts"
   ]
 }

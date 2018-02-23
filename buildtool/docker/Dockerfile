@@ -15,8 +15,14 @@ RUN apt-get update && \
     apt-get install -y -q docker-ce=17.12.0~ce-0~debian
 
 # Install NodeJS
-RUN curl -sL https://deb.nodesource.com/setup_6.x | bash - && \
-    apt-get install -y -q nodejs=6.12.3-1nodesource1
+RUN curl -sL https://deb.nodesource.com/setup_8.x | bash - && \
+    apt-get install -y -q nodejs=8.9.4-1nodesource1
+
+# Install Yarn
+RUN curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
+    add-apt-repository "deb https://dl.yarnpkg.com/debian/ stable main" && \
+    apt-get update && \
+    apt-get install -y -q yarn
 
 # Clean up temp files
 #RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/*

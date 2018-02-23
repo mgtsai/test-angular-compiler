@@ -13,5 +13,8 @@
   },
   "include": [
     "main/**/*.ts", "app/**/*.ts"
+  ],
+  "exclude": [
+    "main/main.platformBrowser.ts"
   ]
 }

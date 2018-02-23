@@ -13,10 +13,10 @@ export default {
     plugins: [
         nodeResolve({jsnext: true, module: true}),
         commonjs({
-            include: ['../node_modules/rxjs/**', '../node_modules/ng2-bootstrap/**']
+            include: ['../build/ngcAsCommonJS.ngc/src/**', '../node_modules/rxjs/**', '../node_modules/ng2-bootstrap/**']
         }),
         includepaths({
-            paths: ['../build/ngcAsES2015.ngc/src/main', '../build/ngcAsES2015.ngc/src/app', '../build/ngcAsES2015.ngc/src/template']
+            paths: ['../build/ngcAsCommonJS.ngc/src/main', '../build/ngcAsCommonJS.ngc/src/app', '../build/ngcAsCommonJS.ngc/src/template']
         }),
         sourcemaps()
         //uglify()

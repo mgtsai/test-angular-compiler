@@ -1,0 +1,35 @@
+html {
+  height: 100%;
+}
+
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0px;
+}
+
+tr.listTitle > th {
+  text-align: center;
+}
+
+tr.searchTR > td {
+  text-align: center;
+}
+
+tr.contentTR > td {
+  text-align: center;
+  vertical-align: middle !important;
+}
+
+tr.infoTR > td {
+  vertical-align: middle !important;
+}
+
+table.borderless td, table.borderless th {
+  border: none !important;
+}
+
+h1 {
+  color: #0000ff;
+}

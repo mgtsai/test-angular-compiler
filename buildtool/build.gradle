@@ -1,207 +1,24 @@
 //---------------------------------------------------------------------------------------------------------------------
-buildscript {
-    repositories {
-        maven { url "https://plugins.gradle.org/m2/" }
+apply from: 'gradle/buildtool.gradle'
+//---------------------------------------------------------------------------------------------------------------------
+buildtool {
+    String dockerHost = System.env.DOCKER_HOST
+    if (dockerHost) {
+        dockerUrl = dockerHost.replace('tcp', 'https')
+        dockerCertPath = System.env.DOCKER_CERT_PATH
     }
-    dependencies {
-        classpath 'com.bmuschko:gradle-docker-plugin:3.2.3'
-    }
+
+    dockerImageTag = 'buildtools/test-angular-compiler'
+    dockerfileDir = "$projectDir/docker"
+    targetHomeDir = "$System.env.HOME/.inBuildtool"
+    targetProjectDir = projectDir.parentFile
+    gradleCommand = "$targetProjectDir/gradlew"
 }
 //---------------------------------------------------------------------------------------------------------------------
-plugins {
-    id 'com.bmuschko.docker-remote-api' version '3.2.3'
-}
-//---------------------------------------------------------------------------------------------------------------------
-repositories {
-    mavenCentral()
-}
-//---------------------------------------------------------------------------------------------------------------------
-import com.bmuschko.gradle.docker.tasks.AbstractDockerRemoteApiTask
-import com.bmuschko.gradle.docker.tasks.image.DockerBuildImage
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.nio.file.attribute.PosixFilePermission
-//---------------------------------------------------------------------------------------------------------------------
-docker {
-    def dockerHost = System.env.DOCKER_HOST
-
-    if (!dockerHost)
-        url = 'unix:///var/run/docker.sock'
-    else {
-        url = dockerHost.replace('tcp', 'https')
-        certPath = System.env.DOCKER_CERT_PATH
-    }
-}
-//---------------------------------------------------------------------------------------------------------------------
-class DockerTask extends AbstractDockerRemoteApiTask
-{
-    private static final def CGROUP_PATTERN = /(?m)^\d+:[\w,?]+:(?:\/[\w.]+)?(?:\/docker[-\/])(\/?(?:docker\/)?(\p{XDigit}{12,}))+(?:\.scope)?$/
-    private static final def mSelfContainerIDLock = new Object()
-    private static String mSelfContainerID = null
-
-    @Override void runRemoteCommand(dockerClient) { }
-
-    static String getSelfContainerID() {
-        synchronized (mSelfContainerIDLock) {
-            if (mSelfContainerID == null) {
-                try {
-                    mSelfContainerID = (new File('/proc/self/cgroup').getText('UTF-8') =~ CGROUP_PATTERN)[0][2]
-                } catch (ignored) {
-                    mSelfContainerID = ''
-                }
-            }
-        }
-        mSelfContainerID != '' ? mSelfContainerID : null
-    }
-
-    private Set<String> absolutePathSet(final Iterable<?> paths) {
-        paths.findAll { it != null }.collect { project.file(it).absolutePath }
-    }
-
-    private static List<String> getContainerMountedVolumes(dockerClient, final String containerID) {
-        dockerClient.inspectContainerCmd(containerID).exec().mounts.collect { it.destination.path }
-    }
-
-    private calculateCreateContainerVolumes(dockerClient, final String containerID, final Iterable<?> sharedDirs) {
-        final Set<String> volumesFrom = []
-        final Map<String, String> binds = [:]
-        final def mountedVolumes = containerID ? getContainerMountedVolumes(dockerClient, containerID) : []
-        absolutePathSet(sharedDirs).each { dir ->
-            if (mountedVolumes.any { dir == it || dir.startsWith(it + '/') })
-                volumesFrom.add containerID
-            else
-                binds[dir] = dir
-        }
-        [volumesFrom, binds]
-    }
-
-    private int createContainerGroupAdd(final int uid, final int gid) {
-        if (project.docker.url != 'unix:///var/run/docker.sock')
-            return -1
-        if (uid == 0)
-            return -1
-        final def attrs = Files.readAttributes(Paths.get('/var/run/docker.sock'), 'unix:uid,gid,permissions')
-        final def sockPerms = attrs.get 'permissions'
-        if (sockPerms.containsAll(EnumSet.of(PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE)))
-            return -1
-        final int sockUid = (Integer) attrs.get('uid')
-        final int sockGid = (Integer) attrs.get('gid')
-        if (sockUid == uid && sockPerms.containsAll(EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)))
-            return -1
-        sockPerms.containsAll(EnumSet.of(PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE)) ? sockGid : -1
-    }
-
-    final createContainer(
-        dockerClient, final String dockerImage,
-        final int uid, final int gid,
-        final List<?> sharedDirs, final List<?> env,
-        final Object workingDir, final String... cmd
-    ) {
-        def (volumesFrom, binds) = calculateCreateContainerVolumes(dockerClient, selfContainerID, sharedDirs)
-
-        def fileGid = createContainerGroupAdd uid, gid
-        fileGid = fileGid >= 0 ? fileGid : gid
-
-        final def createContainerCmd = dockerClient.createContainerCmd(dockerImage)
-            .withBinds(createBinds(binds))
-            .withVolumesFrom(createVolumesFrom(volumesFrom.toArray(new String[0])))
-            .withUser("$uid:$fileGid")
-            .withEnv(env.collect{it.toString()})
-            .withCmd(cmd)
-
-        if (workingDir)
-            createContainerCmd.withWorkingDir(project.file(workingDir).absolutePath)
-
-        createContainerCmd.exec()
-    }
-
-    final createBinds(final Map<String, String> binds) {
-        super.threadContextClassLoader.createBinds binds
-    }
-
-    final createVolumesFrom(final String... volumesFrom) {
-        super.threadContextClassLoader.createVolumesFrom volumesFrom
-    }
-
-    final createWaitContainerResultCallback(final Closure onNext) {
-        super.threadContextClassLoader.createWaitContainerResultCallback onNext
-    }
-
-    final createLoggingCallback() {
-        super.threadContextClassLoader.createLoggingCallback((Logger) super.logger)
-    }
-}
-//---------------------------------------------------------------------------------------------------------------------
-class BuildtoolTask extends DockerTask
-{
-    static final def dockerImage = 'buildtools/test-angular-compiler'
-
-    final void runInContainerWithIds(final int uid, final int gid, final Object workingDir, final String... cmd) {
-        super.runInDockerClassPath { dockerClient ->
-            final def container = super.createContainer(
-                dockerClient, dockerImage, uid, gid,
-                [project.projectDir.parentFile, workingDir],
-                ["HOME=$project.projectDir.parent", "GRADLE_USER_HOME=$project.projectDir.parent/.gradle"],
-                workingDir, cmd
-            )
-
-            dockerClient.startContainerCmd(container.id).exec()
-
-            dockerClient.logContainerCmd(container.id)
-                .withStdOut(true).withStdErr(true).withFollowStream(true)
-                .exec(super.createLoggingCallback())
-
-            def containerStatusCode = 0
-
-            dockerClient.waitContainerCmd(container.id)
-                .exec(super.createWaitContainerResultCallback { containerStatusCode = it.statusCode })
-                .awaitCompletion()
-
-            dockerClient.removeContainerCmd(container.id).exec()
-
-            if (containerStatusCode)
-                throw new GradleException("Failure with error code $containerStatusCode")
-        }
-    }
-
-    final void runInContainer(final Object workingDir, final String... cmd) {
-        final def username = System.properties['user.name']
-        final def uid = ['id', '-u', username].execute().text.trim().toInteger()
-        final def gid = ['id', '-g', username].execute().text.trim().toInteger()
-        this.runInContainerWithIds uid, gid, workingDir, cmd
-    }
-}
-//---------------------------------------------------------------------------------------------------------------------
-class BuildtoolExecTask extends BuildtoolTask
-{
-    private Object mWorkingDir = null
-    private String[] mCmd = []
-
-    final void workingDir(final Object workingDir) {
-        mWorkingDir = workingDir
-    }
-
-    final void commandLine(final String... cmd) {
-        mCmd = cmd
-    }
-
-    @TaskAction def action() {
-        super.runInContainer mWorkingDir, mCmd
-    }
-}
-//---------------------------------------------------------------------------------------------------------------------
-class BuildtoolBuildTask extends BuildtoolExecTask
-{
-    final void target(final String target) {
-        super.workingDir '..'
-        super.commandLine './gradlew', target
-    }
-}
-//---------------------------------------------------------------------------------------------------------------------
-task buildBuildtoolDockerImage(type: DockerBuildImage) {
-    group 'buildtool'
-    inputDir file("$projectDir/docker")
-    tag BuildtoolTask.dockerImage
+task runBuildtoolDockerContainer(type: BuildtoolExecTask) {
+    dockerContainerName 'buildtool.test-angular-compiler'
+    background true
+    commandLine 'sleep', 'infinity'
 }
 //---------------------------------------------------------------------------------------------------------------------
 task compileAngular(type: BuildtoolBuildTask) {
@@ -209,9 +26,9 @@ task compileAngular(type: BuildtoolBuildTask) {
     target 'compileAngular'
 }
 //---------------------------------------------------------------------------------------------------------------------
-task installNpmModules(type: BuildtoolBuildTask) {
+task installNodeModules(type: BuildtoolBuildTask) {
     group 'node'
-    target 'installNpmModules'
+    target 'installNodeModules'
 }
 //---------------------------------------------------------------------------------------------------------------------
 task compileTool(type: BuildtoolBuildTask) {
@@ -224,9 +41,39 @@ task runTool(type: BuildtoolBuildTask) {
     target 'runTool'
 }
 //---------------------------------------------------------------------------------------------------------------------
+task webpackAsES2015UsingAngular(type: BuildtoolBuildTask) {
+    group 'webpackAsES2015'
+    target 'webpackAsES2015UsingAngular'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackAsES2015UsingAngular(type: BuildtoolBuildTask) {
+    group 'webpackAsES2015'
+    target 'runWebsiteWithWebpackAsES2015UsingAngular'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task webpackAsES2015UsingTypescript(type: BuildtoolBuildTask) {
+    group 'webpackAsES2015'
+    target 'webpackAsES2015UsingTypescript'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackAsES2015UsingTypescript(type: BuildtoolBuildTask) {
+    group 'webpackAsES2015'
+    target 'runWebsiteWithWebpackAsES2015UsingTypescript'
+}
+//---------------------------------------------------------------------------------------------------------------------
 task compileNgcAsES2015(type: BuildtoolBuildTask) {
     group 'ngcAsES2015'
     target 'compileNgcAsES2015'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task webpackNgcAsES2015(type: BuildtoolBuildTask) {
+    group 'ngcAsES2015'
+    target 'webpackNgcAsES2015'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackNgcAsES2015(type: BuildtoolBuildTask) {
+    group 'ngcAsES2015'
+    target 'runWebsiteWithWebpackNgcAsES2015'
 }
 //---------------------------------------------------------------------------------------------------------------------
 task rollupNgcAsES2015(type: BuildtoolBuildTask) {
@@ -234,9 +81,54 @@ task rollupNgcAsES2015(type: BuildtoolBuildTask) {
     target 'rollupNgcAsES2015'
 }
 //---------------------------------------------------------------------------------------------------------------------
-task runWebsiteWithNgcAsES2015(type: BuildtoolBuildTask) {
+task runWebsiteWithRollupNgcAsES2015(type: BuildtoolBuildTask) {
     group 'ngcAsES2015'
-    target 'runWebsiteWithNgcAsES2015'
+    target 'runWebsiteWithRollupNgcAsES2015'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'compileNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'runWebsiteWithNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task webpackNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'webpackNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task rollupNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'rollupNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithRollupNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'runWebsiteWithRollupNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackNgcAsCommonJS(type: BuildtoolBuildTask) {
+    group 'ngcAsCommonJS'
+    target 'runWebsiteWithWebpackNgcAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task compileTscAsES2015(type: BuildtoolBuildTask) {
+    group 'tscAsES2015'
+    target 'compileTscAsES2015'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task webpackTscAsES2015(type: BuildtoolBuildTask) {
+    group 'tscAsES2015'
+    target 'webpackTscAsES2015'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackTscAsES2015(type: BuildtoolBuildTask) {
+    group 'tscAsES2015'
+    target 'runWebsiteWithWebpackTscAsES2015'
 }
 //---------------------------------------------------------------------------------------------------------------------
 task compileTscAsCommonJS(type: BuildtoolBuildTask) {
@@ -247,6 +139,26 @@ task compileTscAsCommonJS(type: BuildtoolBuildTask) {
 task runWebsiteWithTscAsCommonJS(type: BuildtoolBuildTask) {
     group 'tscAsCommonJS'
     target 'runWebsiteWithTscAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task webpackTscAsCommonJS(type: BuildtoolBuildTask) {
+    group 'tscAsCommonJS'
+    target 'webpackTscAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithWebpackTscAsCommonJS(type: BuildtoolBuildTask) {
+    group 'tscAsCommonJS'
+    target 'runWebsiteWithWebpackTscAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task rollupTscAsCommonJS(type: BuildtoolBuildTask) {
+    group 'tscAsCommonJS'
+    target 'rollupTscAsCommonJS'
+}
+//---------------------------------------------------------------------------------------------------------------------
+task runWebsiteWithRollupTscAsCommonJS(type: BuildtoolBuildTask) {
+    group 'tscAsCommonJS'
+    target 'runWebsiteWithRollupTscAsCommonJS'
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithTranspile(type: BuildtoolBuildTask) {

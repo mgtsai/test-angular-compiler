@@ -9,8 +9,7 @@
     "removeComments": true,
     "noImplicitAny": false,
     "lib": ["dom", "es7"],
-    "outDir": "../build/tscAsCommonJS",
-    "rootDirs": ["main", "app"]
+    "rootDirs": ["main", "app", "../../src/template"]
   },
   "include": [
     "main/**/*.ts", "app/**/*.ts"

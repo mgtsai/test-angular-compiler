@@ -1,0 +1,358 @@
+//---------------------------------------------------------------------------------------------------------------------
+buildscript {
+    repositories {
+        maven { url "https://plugins.gradle.org/m2/" }
+    }
+    dependencies {
+        classpath group: 'com.github.docker-java', name: 'docker-java', version: '3.0.14'
+        classpath group: 'cglib', name: 'cglib', version: '3.2.0'
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+repositories {
+    mavenCentral()
+}
+//---------------------------------------------------------------------------------------------------------------------
+import com.github.dockerjava.api.DockerClient
+import com.github.dockerjava.api.command.CreateContainerCmd
+import com.github.dockerjava.api.command.CreateContainerResponse
+import com.github.dockerjava.api.model.Bind
+import com.github.dockerjava.api.model.BuildResponseItem
+import com.github.dockerjava.api.model.Frame
+import com.github.dockerjava.api.model.Volume
+import com.github.dockerjava.api.model.VolumesFrom
+import com.github.dockerjava.core.DefaultDockerClientConfig
+import com.github.dockerjava.core.DockerClientBuilder
+import com.github.dockerjava.core.command.BuildImageResultCallback
+import com.github.dockerjava.core.command.LogContainerResultCallback
+import com.github.dockerjava.core.command.WaitContainerResultCallback
+import net.sf.cglib.proxy.Enhancer
+import net.sf.cglib.proxy.InvocationHandler
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.nio.file.attribute.PosixFilePermission
+//---------------------------------------------------------------------------------------------------------------------
+def PLUGIN_ID = 'buildtool'
+//---------------------------------------------------------------------------------------------------------------------
+class BuildtoolExtension
+{
+    private final Project mProject
+
+    String dockerUrl = DockerHelper.DEFAULT_DOCKER_URL
+    def dockerCertPath = null
+    String dockerApiVersion = null
+
+    String dockerImageTag = null
+    Object dockerfileDir
+
+    Object targetHomeDir
+    Object targetProjectDir
+    String gradleCommand = 'gradle'
+
+    BuildtoolExtension(Project project) {
+        mProject = project
+        dockerfileDir = mProject.projectDir
+        targetHomeDir = mProject.projectDir
+        targetProjectDir = mProject.projectDir
+    }
+
+    DockerHelper getDockerHelper() {
+        new DockerHelper(mProject).init dockerUrl, dockerCertPath, dockerApiVersion
+    }
+}
+
+extensions.create PLUGIN_ID, BuildtoolExtension, project
+//---------------------------------------------------------------------------------------------------------------------
+class DockerHelper
+{
+    //-----------------------------------------------------------------------------------------------------------------
+    static final DOCKER_SOCK_PATH = '/var/run/docker.sock'
+    static final DEFAULT_DOCKER_URL = "unix://$DOCKER_SOCK_PATH"
+    private static final TRAILING_WHIESPACE = /\s+$/
+    private static final CGROUP_PATTERN = /(?m)^\d+:[\w,?]+:(?:\/[\w.]+)?(?:\/docker[-\/])(\/?(?:docker\/)?(\p{XDigit}{12,}))+(?:\.scope)?$/
+    private static final mSelfContainerIDLock = new Object()
+    private static String mSelfContainerID = null
+    private final Project mProject
+    private String mDockerUrl
+    private DockerClient mDockerClient = null
+    //-----------------------------------------------------------------------------------------------------------------
+    DockerHelper(Project project) {
+        mProject = project
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    DockerHelper init(String url, certPath, String apiVersion) {
+        mDockerUrl = url
+
+        DefaultDockerClientConfig.Builder configBuilder = DefaultDockerClientConfig
+            .createDefaultConfigBuilder()
+            .withDockerHost(url)
+
+        if (certPath)
+            configBuilder
+                .withDockerTlsVerify(true)
+                .withDockerCertPath(mProject.file(certPath).canonicalPath)
+        else
+            configBuilder.withDockerTlsVerify(false)
+
+        if (apiVersion)
+            configBuilder.withApiVersion(apiVersion)
+
+        mDockerClient = DockerClientBuilder.getInstance(configBuilder.build()).build()
+        this
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    DockerClient getClient() {
+        mDockerClient
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    static String getSelfContainerID() {
+        synchronized (mSelfContainerIDLock) {
+            if (mSelfContainerID == null) {
+                try {
+                    mSelfContainerID = (new File('/proc/self/cgroup').getText('UTF-8') =~ CGROUP_PATTERN)[0][2]
+                } catch (ignored) {
+                    mSelfContainerID = ''
+                }
+            }
+        }
+
+        mSelfContainerID != '' ? mSelfContainerID : null
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    private Set<String> absolutePathSet(Iterable<?> paths) {
+        paths.findAll { it != null }.collect { mProject.file(it).absolutePath }
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    private List<String> getContainerMountedVolumes(String containerID) {
+        mDockerClient.inspectContainerCmd(containerID).exec().mounts.collect { it.destination.path }
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    private calculateCreateContainerVolumes(String containerID, Iterable<?> sharedDirs) {
+        Set<String> volumesFrom = []
+        Set<String> binds = []
+        List<String> mountedVolumes = containerID ? getContainerMountedVolumes(containerID) : []
+
+        absolutePathSet(sharedDirs).each { dir ->
+            if (mountedVolumes.any { dir == it || dir.startsWith("$it/") })
+                volumesFrom.add containerID
+            else
+                binds.add dir
+        }
+
+        [
+            volumesFrom.collect { new VolumesFrom(it) },
+            binds.collect { new Bind(it, new Volume(it)) }
+        ]
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    private int createContainerGroupAdd(int uid, int gid) {
+        if (mDockerUrl != DEFAULT_DOCKER_URL)
+            return -1
+        if (uid == 0)
+            return -1
+
+        Map<String, Object> attrs = Files.readAttributes Paths.get(DOCKER_SOCK_PATH), 'unix:uid,gid,permissions'
+        int sockUid = (int) attrs.get('uid')
+        int sockGid = (int) attrs.get('gid')
+        def sockPerms = attrs.get 'permissions'
+        boolean hasGroupPermission = sockPerms.containsAll EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+        boolean hasOthersPermission = sockPerms.containsAll EnumSet.of(PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE)
+        sockUid != uid && sockGid != gid && hasGroupPermission && !hasOthersPermission ? sockGid : -1
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    CreateContainerResponse createContainer(
+        String imageId, String containerName,
+        int uid, int gid,
+        List<?> sharedDirs, List<?> env,
+        Object workingDir, String... cmd
+    ) {
+        def (List<VolumesFrom> volumesFrom, List<Bind> binds) = calculateCreateContainerVolumes(selfContainerID, sharedDirs)
+
+        int fileGid = createContainerGroupAdd uid, gid
+        fileGid = fileGid >= 0 ? fileGid : gid
+
+        CreateContainerCmd createContainerCmd = mDockerClient.createContainerCmd(imageId)
+            .withBinds(binds)
+            .withVolumesFrom(volumesFrom)
+            .withUser("$uid:$fileGid")
+            .withEnv(env.collect{it.toString()})
+            .withCmd(cmd)
+
+        if (containerName)
+            createContainerCmd.withName containerName
+
+        if (workingDir)
+            createContainerCmd.withWorkingDir mProject.file(workingDir).absolutePath
+
+        createContainerCmd.exec()
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    private static <T> T createOnNextProxyCallback(T defaultHandler, Closure onNext) {
+        if (!onNext)
+            return defaultHandler
+
+        Enhancer enhancer = new Enhancer()
+        enhancer.setSuperclass(defaultHandler.getClass())
+
+        enhancer.setCallback([
+            invoke: { Object proxy, Method method, Object[] args ->
+                if ('onNext' == method.name)
+                    onNext.call(args[0])
+
+                try {
+                    method.invoke(defaultHandler, args)
+                } catch (InvocationTargetException e) {
+                    throw e.cause
+                }
+            }
+        ] as InvocationHandler)
+
+        (T) enhancer.create()
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    static BuildImageResultCallback createBuildImageResultCallback(Logger logger) {
+        createOnNextProxyCallback(new BuildImageResultCallback(), { BuildResponseItem respItem ->
+            if (respItem.stream)
+                logger.quiet(respItem.stream.trim())
+        })
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    static WaitContainerResultCallback createWaitContainerResultCallback(Closure onNext) {
+        createOnNextProxyCallback(new WaitContainerResultCallback(), onNext)
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+    static LogContainerResultCallback createLoggingCallback(Logger logger) {
+        createOnNextProxyCallback(new LogContainerResultCallback(), { Frame frame ->
+            switch (frame.streamType as String) {
+            case 'STDOUT':
+            case 'RAW':
+                logger.quiet(new String(frame.payload).replaceFirst(TRAILING_WHIESPACE, ''))
+                break
+            case 'STDERR':
+                logger.error(new String(frame.payload).replaceFirst(TRAILING_WHIESPACE, ''))
+                break
+            }
+        })
+    }
+    //-----------------------------------------------------------------------------------------------------------------
+}
+//---------------------------------------------------------------------------------------------------------------------
+class BuildtoolTask extends DefaultTask
+{
+    void runInContainerWithIds(
+        String containerName,
+        Object workingDir,
+        int uid, int gid,
+        boolean background,
+        String... cmd
+    ) {
+        DockerHelper helper = project.buildtool.dockerHelper
+        DockerClient client = helper.client
+
+        if (containerName) {
+            try { client.stopContainerCmd(containerName).exec() } catch (ignored) { }
+            try { client.removeContainerCmd(containerName).exec() } catch (ignored) { }
+        }
+
+        project.file(project.buildtool.targetHomeDir).mkdirs()
+
+        if (workingDir)
+            project.file(workingDir).mkdirs()
+
+        CreateContainerResponse container = helper.createContainer(
+            project.buildtool.dockerImageTag, containerName,
+            uid, gid,
+            [project.buildtool.targetHomeDir, project.buildtool.targetProjectDir, workingDir],
+            ["HOME=$project.buildtool.targetHomeDir", "GRADLE_USER_HOME=$project.buildtool.targetHomeDir/.gradle"],
+            workingDir, cmd
+        )
+
+        client.startContainerCmd(container.id).exec()
+
+        if (!background) {
+            client.logContainerCmd(container.id)
+                .withStdOut(true).withStdErr(true).withFollowStream(true)
+                .exec(DockerHelper.createLoggingCallback(project.logger))
+
+            def containerStatusCode = 0
+
+            client.waitContainerCmd(container.id)
+                .exec(DockerHelper.createWaitContainerResultCallback { containerStatusCode = it.statusCode })
+                .awaitCompletion()
+
+            client.removeContainerCmd(container.id).exec()
+
+            if (containerStatusCode)
+                throw new GradleException("Failure with error code $containerStatusCode")
+        }
+    }
+
+    void runInContainer(String containerName, Object workingDir, boolean background, String... cmd) {
+        String username = System.properties['user.name']
+        int uid = ['id', '-u', username].execute().text.trim().toInteger()
+        int gid = ['id', '-g', username].execute().text.trim().toInteger()
+        runInContainerWithIds containerName, workingDir, uid, gid, background, cmd
+    }
+}
+
+ext.BuildtoolTask = BuildtoolTask
+
+tasks.withType(BuildtoolTask) {
+    group = PLUGIN_ID
+}
+//---------------------------------------------------------------------------------------------------------------------
+class BuildtoolExecTask extends BuildtoolTask
+{
+    private String mDockerContainerName = null
+    private Object mWorkingDir = null
+    private boolean mBackground = false
+    private String[] mCmd = []
+
+    void dockerContainerName(String containerName) {
+        mDockerContainerName = containerName
+    }
+
+    void workingDir(Object workingDir) {
+        mWorkingDir = workingDir
+    }
+
+    void background(boolean background) {
+        mBackground = background
+    }
+
+    void commandLine(String... cmd) {
+        mCmd = cmd
+    }
+
+    @TaskAction def action() {
+        super.runInContainer mDockerContainerName, mWorkingDir, mBackground, mCmd
+    }
+}
+
+ext.BuildtoolExecTask = BuildtoolExecTask
+//---------------------------------------------------------------------------------------------------------------------
+class BuildtoolBuildTask extends BuildtoolExecTask
+{
+    void target(String target) {
+        super.workingDir project.buildtool.targetProjectDir
+        super.commandLine project.buildtool.gradleCommand, target
+    }
+}
+
+ext.BuildtoolBuildTask = BuildtoolBuildTask
+//---------------------------------------------------------------------------------------------------------------------
+task buildBuildtoolDockerImage(type: BuildtoolTask) {
+    group PLUGIN_ID
+
+    doLast {
+        DockerHelper helper = project.buildtool.dockerHelper
+
+        helper.client.buildImageCmd(file(buildtool.dockerfileDir))
+            .withTags(Collections.singleton(buildtool.dockerImageTag))
+            .exec(DockerHelper.createBuildImageResultCallback(logger))
+            .awaitImageId()
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------

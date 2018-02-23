@@ -4,12 +4,13 @@ import * as browser from '@angular/platform-browser';
 import * as config from './config';
 import {AppComponent} from './app.component';
 
-const baseUrl = config.Config.getBaseUrl();
-console.error(baseUrl);
-
 @core.NgModule({
     bootstrap: [AppComponent],
     imports: [http.HttpModule, browser.BrowserModule],
     declarations: [AppComponent]
 })
-export class AppModule { }
+export class AppModule {
+    constructor() {
+        console.error('AppModule.constructor', config.getBaseUrl());
+    }
+}

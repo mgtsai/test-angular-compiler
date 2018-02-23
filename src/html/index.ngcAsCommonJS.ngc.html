@@ -1,14 +1,13 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
 <html>
 <head>
-<title>TestAngularCompiler - Transpile</title>
+<title>TestAngularCompiler - Ngc as CommonJS</title>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <base href="/">
 <script type="text/javascript" src="node_modules/core-js/client/shim.min.js"></script>
 <script type="text/javascript" src="node_modules/zone.js/dist/zone.js"></script>
 <script type="text/javascript" src="node_modules/reflect-metadata/Reflect.js"></script>
 <script type="text/javascript" src="node_modules/systemjs/dist/system.js"></script>
-<script type="text/javascript" src="node_modules/typescript/lib/typescript.js"></script>
 <script type="text/javascript" src="node_modules/moment/min/moment.min.js"></script>
 <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap.min.css"/>
 <link rel="stylesheet" href="node_modules/bootstrap/dist/css/bootstrap-theme.min.css"/>
@@ -31,51 +30,28 @@ System.config({
         'rxjs':                              'npm:rxjs',
         'angular-in-memory-web-api':         'npm:angular-in-memory-web-api/bundles/in-memory-web-api.umd.js',
         'ng2-bootstrap/ng2-bootstrap':       'npm:ng2-bootstrap/bundles/ng2-bootstrap.umd.js',
-        'moment':                            'npm:moment/moment.js',
-        'ts':                                'npm:plugin-typescript/lib/plugin.js',
-        'typescript':                        'npm:typescript'
+        'moment':                            'npm:moment/moment.js'
     },
     packages: {
         rxjs: {
             defaultExtension: 'js'
         },
-        typescript: {
-            main: 'lib/typescript.js',
-            //format: 'global',
-            meta: {
-                'lib/typescript.js': {
-                    exports: 'ts'
-                }
-            }
-        },
-        src: {
-            defaultExtension: 'ts',
+        'build/ngcAsCommonJS.ngc': {
+            defaultExtension: 'js',
             map: {
-                './main/main.platformBrowserDynamic': './app/main.platformBrowserDynamic'
+                './src/main/main.platformBrowser': './src/app/main.platformBrowser'
             },
             meta: {
-                '*.ts': {
+                '*.js': {
                     loader: 'systemjs-angular-loader.js',
-                    rootPaths: ['src/main', 'src/app'],
-                    typescriptOptions: {
-                        target: 'es5',
-                        module: 'commonjs',
-                        moduleResolution: 'node',
-                        sourceMap: true,
-                        emitDecoratorMetadata: true,
-                        experimentalDecorators: true,
-                        removeComments: true,
-                        noImplicitAny: false,
-                        lib: ['dom', 'es7']
-                    }
+                    rootPaths: ['build/ngcAsCommonJS.ngc/src/main', 'build/ngcAsCommonJS.ngc/src/app', 'build/ngcAsCommonJS.ngc/src/template']
                 }
             }
         }
-    },
-    transpiler: 'ts'
+    }
 });
 
-System.import('src/main/main.platformBrowserDynamic')
+System.import('build/ngcAsCommonJS.ngc/src/main/main.platformBrowser')
 .catch(function(err){ console.error(err); });
 </script>
 </head>

@@ -1,0 +1,3 @@
+FROM nginx:1.13.0
+COPY html/ /usr/share/nginx/html/
+COPY html/index.ngcAsCommonJS.ngc.html /usr/share/nginx/html/index.html
