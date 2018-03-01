@@ -11,6 +11,8 @@ repositories {
 //---------------------------------------------------------------------------------------------------------------------
 import groovy.json.JsonSlurper
 //---------------------------------------------------------------------------------------------------------------------
+final WEBSITE_BASEURL = '/test-angular-compiler'
+//---------------------------------------------------------------------------------------------------------------------
 class DockerHelper {
     private static final def CGROUP_PATTERN = /(?m)^\d+:[\w,?]+:(?:\/[\w.]+)?(?:\/docker[-\/])(\/?(?:docker\/)?(\p{XDigit}{12,}))+(?:\.scope)?$/
     private static final def mSelfContainerIDLock = new Object()
@@ -29,11 +31,18 @@ class DockerHelper {
         mSelfContainerID != '' ? mSelfContainerID : null
     }
 
+    static inspectContainer(imageID) {
+        try {
+            new JsonSlurper().parseText(['docker', 'container', 'inspect', imageID].execute().text.trim())[0]
+        } catch (ignored) {
+            null
+        }
+    }
+
     static getHostPath(final File localFile) {
-        final String mounts = ['docker', 'inspect', '--format', '{{json .Mounts}}', selfContainerID].execute().text.trim()
         String mountPoint = null
         String destination = "/"
-        new JsonSlurper().parseText(mounts).each {
+        inspectContainer(selfContainerID)?.Mounts?.each {
             if (
                 //(it.Driver == null || it.Driver == 'local') &&
                 it.Destination.startsWith(destination) &&
@@ -101,18 +110,23 @@ task webpackAsES2015UsingAngular(type: Exec) {
     inputs.dir "$projectDir/src/main/"
     inputs.dir "$projectDir/src/app/"
     inputs.dir "$projectDir/src/template/"
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryTs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryTs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackAsES2015UsingAngular {
     group 'webpackAsES2015'
     def outputSubdir = 'webpackAsES2015.angular'
-    def indexHtml = 'index.webpackAsES2015.angular.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/webpackAsES2015.docker.angular"
-    def dockerImageName = 'buildtools/test-angular-compiler.webpack-as-es2015.angular'
+    def dockerImageName = 'buildtool/test-angular-compiler.webpack-as-es2015.angular'
     def dockerContainerName = 'test-angular-compiler.webpack-as-es2015.angular'
     def dockerPublishedPort = 20080
     inputs.files webpackAsES2015UsingAngular.outputs
@@ -122,15 +136,16 @@ task runWebsiteWithWebpackAsES2015UsingAngular {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -147,7 +162,13 @@ task runWebsiteWithWebpackAsES2015UsingAngular {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -163,18 +184,23 @@ task webpackAsES2015UsingTypescript(type: Exec) {
     inputs.dir "$projectDir/src/main/"
     inputs.dir "$projectDir/src/app/"
     inputs.dir "$projectDir/src/template/"
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryTs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryTs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackAsES2015UsingTypescript {
     group 'webpackAsES2015'
     def outputSubdir = 'webpackAsES2015.typescript'
-    def indexHtml = 'index.webpackAsES2015.typescript.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/webpackAsES2015.docker.typescript"
-    def dockerImageName = 'buildtools/test-angular-compiler.webpack-as-es2015.typescript'
+    def dockerImageName = 'buildtool/test-angular-compiler.webpack-as-es2015.typescript'
     def dockerContainerName = 'test-angular-compiler.webpack-as-es2015.typescript'
     def dockerPublishedPort = 21080
     inputs.files webpackAsES2015UsingTypescript.outputs
@@ -184,15 +210,16 @@ task runWebsiteWithWebpackAsES2015UsingTypescript {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -209,7 +236,13 @@ task runWebsiteWithWebpackAsES2015UsingTypescript {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -234,18 +267,23 @@ task webpackNgcAsES2015(type: Exec) {
     def outputDir = "$buildDir/ngcAsES2015.webpack"
     inputs.files compileNgcAsES2015.outputs
     inputs.file webpackConfigJson
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryJs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryJs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackNgcAsES2015 {
     group 'ngcAsES2015'
     def outputSubdir = 'ngcAsES2015.webpack'
-    def indexHtml = 'index.ngcAsES2015.webpack.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/ngcAsES2015.docker.webpack"
-    def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-es2015.webpack'
+    def dockerImageName = 'buildtool/test-angular-compiler.ngc-as-es2015.webpack'
     def dockerContainerName = 'test-angular-compiler.ngc-as-es2015.webpack'
     def dockerPublishedPort = 22080
     inputs.files webpackNgcAsES2015.outputs
@@ -255,15 +293,16 @@ task runWebsiteWithWebpackNgcAsES2015 {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -280,7 +319,13 @@ task runWebsiteWithWebpackNgcAsES2015 {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -301,9 +346,9 @@ task runWebsiteWithRollupNgcAsES2015 {
     group 'ngcAsES2015'
     def outputSubdir = 'ngcAsES2015.rollup'
     def indexHtml = 'index.ngcAsES2015.rollup.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/ngcAsES2015.docker.rollup"
-    def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-es2015.rollup'
+    def dockerImageName = 'buildtool/test-angular-compiler.ngc-as-es2015.rollup'
     def dockerContainerName = 'test-angular-compiler.ngc-as-es2015.rollup'
     def dockerPublishedPort = 23080
     inputs.files rollupNgcAsES2015.outputs
@@ -313,6 +358,7 @@ task runWebsiteWithRollupNgcAsES2015 {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
             rename indexHtml, 'index.html'
@@ -338,7 +384,13 @@ task runWebsiteWithRollupNgcAsES2015 {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -360,7 +412,7 @@ task runWebsiteWithNgcAsCommonJS {
     group 'ngcAsCommonJS'
     def outputSubdir = 'ngcAsCommonJS.ngc'
     def dockerfile = 'Dockerfile.ngcAsCommonJS.ngc'
-    def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-commonjs.ngc'
+    def dockerImageName = 'buildtool/test-angular-compiler.ngc-as-commonjs.ngc'
     def dockerContainerName = 'test-angular-compiler.ngc-as-commonjs.ngc'
     def dockerPublishedPort = 24080
     inputs.files compileNgcAsCommonJS.outputs
@@ -380,12 +432,13 @@ task runWebsiteWithNgcAsCommonJS {
         def htmlContainerDir = "$nginxContainerDir/html"
 
         exec { commandLine 'docker', 'run', '--detach',
-                '--name', dockerContainerName,
-                '--publish', "$dockerPublishedPort:80",
-                '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
-                '--volume', "$buildHostDir/$outputSubdir:$htmlContainerDir/build/$outputSubdir",
-                '--volume', "$projectHostDir/src:$htmlContainerDir/src",
-                dockerImageName
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
+            '--volume', "$buildHostDir/$outputSubdir:$htmlContainerDir/build/$outputSubdir",
+            '--volume', "$projectHostDir/src:$htmlContainerDir/src",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
         }
     }
 }
@@ -397,18 +450,23 @@ task webpackNgcAsCommonJS(type: Exec) {
     def outputDir = "$buildDir/ngcAsCommonJS.webpack"
     inputs.files compileNgcAsCommonJS.outputs
     inputs.file webpackConfigJson
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryJs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryJs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackNgcAsCommonJS {
     group 'ngcAsCommonJS'
     def outputSubdir = 'ngcAsCommonJS.webpack'
-    def indexHtml = 'index.ngcAsCommonJS.webpack.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/ngcAsCommonJS.docker.webpack"
-    def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-commonjs.webpack'
+    def dockerImageName = 'buildtool/test-angular-compiler.ngc-as-commonjs.webpack'
     def dockerContainerName = 'test-angular-compiler.ngc-as-commonjs.webpack'
     def dockerPublishedPort = 25080
     inputs.files webpackNgcAsCommonJS.outputs
@@ -418,15 +476,16 @@ task runWebsiteWithWebpackNgcAsCommonJS {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -443,7 +502,13 @@ task runWebsiteWithWebpackNgcAsCommonJS {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -464,9 +529,9 @@ task runWebsiteWithRollupNgcAsCommonJS {
     group 'ngcAsCommonJS'
     def outputSubdir = 'ngcAsCommonJS.rollup'
     def indexHtml = 'index.ngcAsCommonJS.rollup.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/ngcAsCommonJS.docker.rollup"
-    def dockerImageName = 'buildtools/test-angular-compiler.ngc-as-commonjs.rollup'
+    def dockerImageName = 'buildtool/test-angular-compiler.ngc-as-commonjs.rollup'
     def dockerContainerName = 'test-angular-compiler.ngc-as-commonjs.rollup'
     def dockerPublishedPort = 26080
     inputs.files rollupNgcAsCommonJS.outputs
@@ -476,6 +541,7 @@ task runWebsiteWithRollupNgcAsCommonJS {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
             rename indexHtml, 'index.html'
@@ -501,7 +567,13 @@ task runWebsiteWithRollupNgcAsCommonJS {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -526,18 +598,23 @@ task webpackTscAsES2015(type: Exec) {
     inputs.files compileTscAsES2015.outputs
     inputs.file webpackConfigJson
     inputs.dir "$projectDir/src/template/"
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryJs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryJs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackTscAsES2015 {
     group 'tscAsES2015'
     def outputSubdir = 'tscAsES2015.webpack'
-    def indexHtml = 'index.tscAsES2015.webpack.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/tscAsES2015.docker.webpack"
-    def dockerImageName = 'buildtools/test-angular-compiler.tsc-as-es2015.webpack'
+    def dockerImageName = 'buildtool/test-angular-compiler.tsc-as-es2015.webpack'
     def dockerContainerName = 'test-angular-compiler.tsc-as-es2015.webpack'
     def dockerPublishedPort = 27080
     inputs.files webpackTscAsES2015.outputs
@@ -547,15 +624,16 @@ task runWebsiteWithWebpackTscAsES2015 {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -572,7 +650,13 @@ task runWebsiteWithWebpackTscAsES2015 {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -593,7 +677,7 @@ task runWebsiteWithTscAsCommonJS {
     group 'tscAsCommonJS'
     def outputSubdir = 'tscAsCommonJS.tsc'
     def dockerfile = 'Dockerfile.tscAsCommonJS.tsc'
-    def dockerImageName = 'buildtools/test-angular-compiler.tsc-as-commonjs.tsc'
+    def dockerImageName = 'buildtool/test-angular-compiler.tsc-as-commonjs.tsc'
     def dockerContainerName = 'test-angular-compiler.tsc-as-commonjs.tsc'
     def dockerPublishedPort = 28080
     inputs.files compileTscAsCommonJS.outputs
@@ -618,6 +702,7 @@ task runWebsiteWithTscAsCommonJS {
             '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
             '--volume', "$buildHostDir/$outputSubdir:$htmlContainerDir/build/$outputSubdir",
             '--volume', "$projectHostDir/src:$htmlContainerDir/src",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
             dockerImageName
         }
     }
@@ -631,18 +716,23 @@ task webpackTscAsCommonJS(type: Exec) {
     inputs.files compileTscAsCommonJS.outputs
     inputs.file webpackConfigJson
     inputs.dir "$projectDir/src/template/"
+    inputs.dir "$projectDir/src/tools/"
     outputs.dir outputDir
+
+    doFirst {
+        delete outputDir
+    }
+
     workingDir "$projectDir/src"
-    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--entry', entryJs, '--output-path', outputDir
+    commandLine "$projectDir/node_modules/.bin/webpack", '--config', webpackConfigJson, '--output-path', outputDir, "bundle=$entryJs"
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithWebpackTscAsCommonJS {
     group 'tscAsCommonJS'
     def outputSubdir = 'tscAsCommonJS.webpack'
-    def indexHtml = 'index.tscAsCommonJS.webpack.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/tscAsCommonJS.docker.webpack"
-    def dockerImageName = 'buildtools/test-angular-compiler.tsc-as-commonjs.webpack'
+    def dockerImageName = 'buildtool/test-angular-compiler.tsc-as-commonjs.webpack'
     def dockerContainerName = 'test-angular-compiler.tsc-as-commonjs.webpack'
     def dockerPublishedPort = 29080
     inputs.files webpackTscAsCommonJS.outputs
@@ -652,15 +742,16 @@ task runWebsiteWithWebpackTscAsCommonJS {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
-            rename indexHtml, 'index.html'
         }
 
         copy {
             from "$projectDir/node_modules/core-js/client/shim.min.js"
             from "$projectDir/node_modules/zone.js/dist/zone.min.js"
             from "$projectDir/node_modules/moment/min/moment.min.js"
+            from "$buildDir/$outputSubdir/index.html"
             into "$dockerBuildDir/html/"
         }
 
@@ -677,7 +768,13 @@ task runWebsiteWithWebpackTscAsCommonJS {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -699,9 +796,9 @@ task runWebsiteWithRollupTscAsCommonJS {
     group 'tscAsCommonJS'
     def outputSubdir = 'tscAsCommonJS.rollup'
     def indexHtml = 'index.tscAsCommonJS.rollup.html'
-    def dockerfile = 'Dockerfile.copyHtml'
+    def dockerfile = 'Dockerfile.bundle'
     def dockerBuildDir = "$buildDir/tscAsCommonJS.docker.rollup"
-    def dockerImageName = 'buildtools/test-angular-compiler.tsc-as-commonjs.rollup'
+    def dockerImageName = 'buildtool/test-angular-compiler.tsc-as-commonjs.rollup'
     def dockerContainerName = 'test-angular-compiler.tsc-as-commonjs.rollup'
     def dockerPublishedPort = 30080
     inputs.files rollupTscAsCommonJS.outputs
@@ -711,6 +808,7 @@ task runWebsiteWithRollupTscAsCommonJS {
             from "$projectDir/src/"
             into "$dockerBuildDir/"
             include 'html/**'
+            include 'nginx/**'
             include dockerfile
             rename dockerfile, 'Dockerfile'
             rename indexHtml, 'index.html'
@@ -736,14 +834,20 @@ task runWebsiteWithRollupTscAsCommonJS {
         exec { commandLine 'docker', 'build', '--tag', dockerImageName, dockerBuildDir }
         ['docker', 'stop', dockerContainerName].execute().waitFor()
         ['docker', 'rm', dockerContainerName].execute().waitFor()
-        exec { commandLine 'docker', 'run', '--detach', '--name', dockerContainerName, '--publish', "$dockerPublishedPort:80", dockerImageName }
+
+        exec { commandLine 'docker', 'run', '--detach',
+            '--name', dockerContainerName,
+            '--publish', "$dockerPublishedPort:80",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
+            dockerImageName
+        }
     }
 }
 //---------------------------------------------------------------------------------------------------------------------
 task runWebsiteWithTranspile {
     group 'transpile'
     def dockerfile = 'Dockerfile.transpile'
-    def dockerImageName = 'buildtools/test-angular-compiler.transpile'
+    def dockerImageName = 'buildtool/test-angular-compiler.transpile'
     def dockerContainerName = 'test-angular-compiler.transpile'
     def dockerPublishedPort = 31080
 
@@ -765,6 +869,7 @@ task runWebsiteWithTranspile {
             '--publish', "$dockerPublishedPort:80",
             '--volume', "$projectHostDir/node_modules:$htmlContainerDir/node_modules",
             '--volume', "$projectHostDir/src:$htmlContainerDir/src",
+            '--env', "WEBSITE_BASEURL=$WEBSITE_BASEURL",
             dockerImageName
         }
     }

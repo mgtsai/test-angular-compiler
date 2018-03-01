@@ -8,7 +8,7 @@ buildtool {
         dockerCertPath = System.env.DOCKER_CERT_PATH
     }
 
-    dockerImageTag = 'buildtools/test-angular-compiler'
+    dockerImageTag = 'buildtool/test-angular-compiler'
     dockerfileDir = "$projectDir/docker"
     targetHomeDir = "$System.env.HOME/.inBuildtool"
     targetProjectDir = projectDir.parentFile

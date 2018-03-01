@@ -6,5 +6,5 @@ export function getBaseUrl(): string {
 }
 
 export function setLocation(location): void {
-    baseUrl = LocationParser.baseUrl(location.href);
+    baseUrl = LocationParser.baseUrl(location.pathname);
 }

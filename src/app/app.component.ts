@@ -1,27 +1,11 @@
-import * as rx from 'rxjs/Rx';
-import * as core from '@angular/core';
-import * as http from '@angular/http';
+import { Component } from '@angular/core';
 
-@core.Component({
+@Component({
     selector: 'my-app',
-    templateUrl: './app.component.html',
-    styleUrls: ['./styles.css']
+    templateUrl: './app.component.html'
 })
-export class AppComponent implements core.AfterViewInit
-{
-    public title: string = 'Tour of Heroes';
-
-    constructor(private _$http: http.Http)
-    {
+export class AppComponent {
+    constructor() {
         console.error('AppComponent.constructor');
-    }
-
-    ngAfterViewInit(): void
-    {
-        console.error('AppComponent.ngAfterViewInit');
-
-        rx.Observable.of(null)
-        .delay(2000)
-        .subscribe(() => this.title = 'Start');
     }
 }

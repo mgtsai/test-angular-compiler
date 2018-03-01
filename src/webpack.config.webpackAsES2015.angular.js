@@ -2,7 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const webpack = require('webpack');
 const {AngularCompilerPlugin} = require('@ngtools/webpack');
-const TypescriptCompilerOptions = require('./webpack.plugin.typescript-compilerOptions');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const HtmlWebpackPluginExtra = require('./tools/webpack.plugin.html-webpack-plugin-extra');
+const TypescriptCompilerOptions = require('./tools/webpack.plugin.typescript-compilerOptions');
 
 function getOutputDir() {
     return path.resolve(__dirname, module.exports.output.path);
@@ -11,7 +13,7 @@ function getOutputDir() {
 module.exports = {
     devtool: 'source-map',
     output: {
-        filename: 'bundle.js',
+        filename: '[name].[chunkhash].js',
         devtoolModuleFilenameTemplate: info => path.relative(getOutputDir(), info.absoluteResourcePath)
     },
     resolve: {
@@ -43,6 +45,13 @@ module.exports = {
         }),
         new webpack.optimize.UglifyJsPlugin({
             sourceMap: true
+        }),
+        new HtmlWebpackPlugin({
+            title: 'TestAngularCompiler - Webpack as ES2015 using @ngtools/webpack',
+            template: 'tools/webpack.template.index.ejs'
+        }),
+        new HtmlWebpackPluginExtra({
+            htmlBase: '..'
         })
     ]
 };

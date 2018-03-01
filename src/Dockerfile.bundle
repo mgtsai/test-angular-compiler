@@ -11,9 +11,8 @@ RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSI
     tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \
     rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz
 
-COPY nginx/default.tscAsCommonJS.conf /template/etc/nginx/conf.d/default.conf
+COPY nginx/default.bundle.conf /template/etc/nginx/conf.d/default.conf
 COPY html/ /usr/share/nginx/html/
-COPY html/index.tscAsCommonJS.tsc.html /usr/share/nginx/html/index.html
 
 CMD ["dockerize", \
     "-template", "/template/etc/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf", \
