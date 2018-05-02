@@ -1,3 +1,6 @@
 [submodule "angular"]
 	path = angular
 	url = https://github.com/mgtsai/angular
+[submodule "tsickle"]
+	path = tsickle
+	url = https://github.com/angular/tsickle
